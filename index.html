@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Habit Tracker</title>
+  <style>
+    :root {
+      --bg-color: #121212;
+      --text-color: #f5f5f5;
+      --border-color: #444;
+      --accent-color: #4caf50;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      padding: 1rem;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    #login-btn, #logout-btn, #reset-btn {
+      padding: 10px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 0.25rem;
+    }
+
+    #login-btn { background: #1e88e5; color: white; }
+    #logout-btn, #reset-btn { background: #e53935; color: white; }
+
+    .habit-container {
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: max-content;
+      min-width: 100%;
+    }
+
+    th, td {
+      border: 1px solid var(--border-color);
+      padding: 0.4rem;
+      text-align: center;
+      min-width: 70px;
+    }
+
+    th {
+      background-color: #1e1e1e;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    td:first-child, th:first-child {
+      position: sticky;
+      left: 0;
+      background-color: #1c1c1c;
+      z-index: 2;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent-color);
+    }
+
+    @media (max-width: 768px) {
+      th, td {
+        min-width: 60px;
+        font-size: 0.75rem;
+        padding: 0.3rem;
+      }
+    }
+
+    #user-email, #task-editor {
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    #task-list {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .edit-btn {
+      margin-left: 4px;
+      background-color: #555;
+      color: white;
+      border: none;
+      padding: 2px 4px;
+      cursor: pointer;
+      font-size: 0.7rem;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h2>📅 Habit Tracker</h2>
+  <div id="user-email"></div>
+  <div style="text-align: center;">
+    <button id="login-btn">🔐 Sign in with Google</button>
+    <button id="logout-btn" style="display:none;">🚪 Logout</button>
+    <button id="reset-btn" style="display:none;">🔄 Reset</button>
+  </div>
+
+  <div id="task-editor">
+    <input type="text" id="new-task" placeholder="Add new task" />
+    <button id="add-task-btn">➕ Add</button>
+  </div>
+
+  <div class="habit-container">
+    <table id="habitTable"></table>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBHzmv2b1l3yU-wslP8JLoEkUTO_YgFz00",
+      authDomain: "tracker-ab100.firebaseapp.com",
+      projectId: "tracker-ab100",
+      storageBucket: "tracker-ab100.firebasestorage.app",
+      messagingSenderId: "366748601364",
+      appId: "1:366748601364:web:ad96a415941e688d8c2b01"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    const db = getFirestore(app);
+
+    let userId = null;
+    let habitData = {};
+    let tasks = [];
+    const habitTable = document.getElementById("habitTable");
+    const loginBtn = document.getElementById("login-btn");
+    const logoutBtn = document.getElementById("logout-btn");
+    const resetBtn = document.getElementById("reset-btn");
+    const userEmail = document.getElementById("user-email");
+    const addTaskBtn = document.getElementById("add-task-btn");
+
+    addTaskBtn.addEventListener("click", () => {
+      const input = document.getElementById("new-task");
+      const task = input.value.trim();
+      if (task && !tasks.includes(task)) {
+        tasks.push(task);
+        input.value = "";
+        saveAndRender();
+      }
+    });
+
+    window.editTask = (oldTask) => {
+      const newTask = prompt("Rename task:", oldTask);
+      if (newTask && newTask.trim() && !tasks.includes(newTask.trim())) {
+        const updatedData = {};
+        Object.keys(habitData).forEach(key => {
+          if (key.startsWith(oldTask + "_")) {
+            const newKey = newTask.trim() + key.slice(oldTask.length);
+            updatedData[newKey] = habitData[key];
+          } else {
+            updatedData[key] = habitData[key];
+          }
+        });
+        tasks = tasks.map(t => t === oldTask ? newTask.trim() : t);
+        habitData = updatedData;
+        saveAndRender();
+      }
+    };
+
+    window.deleteTask = (taskToRemove) => {
+      if (confirm(`Delete task '${taskToRemove}'?`)) {
+        tasks = tasks.filter(t => t !== taskToRemove);
+        const updatedData = {};
+        Object.keys(habitData).forEach(key => {
+          if (!key.startsWith(taskToRemove + "_")) {
+            updatedData[key] = habitData[key];
+          }
+        });
+        habitData = updatedData;
+        saveAndRender();
+      }
+    };
+
+    function getFormattedDates() {
+      const year = new Date().getFullYear();
+      const dates = [];
+      const today = new Date();
+      const start = new Date(year, 0, 1);
+      const end = new Date(year, 11, 31);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const iso = d.toISOString().split("T")[0];
+        dates.push({
+          full: iso,
+          day: d.getDate(),
+          month: d.toLocaleString('default', { month: 'short' })
+        });
+      }
+      return dates;
+    }
+
+    function scrollToToday() {
+      const container = document.querySelector(".habit-container");
+      const today = new Date().toISOString().split("T")[0];
+      const colIndex = getFormattedDates().findIndex(d => d.full === today);
+      if (colIndex !== -1) {
+        container.scrollLeft = colIndex * 75;
+      }
+    }
+
+    function renderTable() {
+      const dates = getFormattedDates();
+      habitTable.innerHTML = "";
+
+      const monthRow = document.createElement("tr");
+      monthRow.appendChild(document.createElement("th"));
+      dates.forEach(date => {
+        const th = document.createElement("th");
+        th.textContent = date.month;
+        monthRow.appendChild(th);
+      });
+      habitTable.appendChild(monthRow);
+
+      const dayRow = document.createElement("tr");
+      const dayHeader = document.createElement("th");
+      dayHeader.textContent = "Task / Date";
+      dayRow.appendChild(dayHeader);
+      dates.forEach(date => {
+        const th = document.createElement("th");
+        th.textContent = date.day;
+        dayRow.appendChild(th);
+      });
+      habitTable.appendChild(dayRow);
+
+      tasks.forEach(task => {
+        const row = document.createElement("tr");
+        const taskCell = document.createElement("td");
+        taskCell.innerHTML = `${task} <button class="edit-btn" onclick="editTask('${task}')">✏️</button><button class="edit-btn" onclick="deleteTask('${task}')">🗑️</button>`;
+        row.appendChild(taskCell);
+
+        dates.forEach(date => {
+          const cell = document.createElement("td");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+
+          const key = `${task}_${date.full}`;
+          checkbox.checked = habitData[key] === true;
+
+          checkbox.onchange = async () => {
+            habitData[key] = checkbox.checked;
+            if (userId) await setDoc(doc(db, "habits", userId), { data: habitData, tasks });
+          };
+
+          cell.appendChild(checkbox);
+          row.appendChild(cell);
+        });
+        habitTable.appendChild(row);
+      });
+
+      scrollToToday();
+    }
+
+    async function saveAndRender() {
+      if (userId) await setDoc(doc(db, "habits", userId), { data: habitData, tasks });
+      renderTable();
+    }
+
+    resetBtn.onclick = () => {
+      if (confirm("Reset all data?")) {
+        habitData = {};
+        tasks = [];
+        if (userId) setDoc(doc(db, "habits", userId), { data: {}, tasks: [] });
+        renderTable();
+      }
+    };
+
+    loginBtn.onclick = () => signInWithPopup(auth, provider);
+    logoutBtn.onclick = () => signOut(auth);
+
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        userId = user.uid;
+        userEmail.textContent = `Signed in as ${user.email}`;
+        loginBtn.style.display = "none";
+        logoutBtn.style.display = "inline-block";
+        resetBtn.style.display = "inline-block";
+
+        const ref = doc(db, "habits", userId);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const saved = snap.data();
+          habitData = saved.data || {};
+          tasks = saved.tasks || [];
+        }
+        renderTable();
+      } else {
+        userId = null;
+        habitData = {};
+        tasks = [];
+        userEmail.textContent = "";
+        loginBtn.style.display = "inline-block";
+        logoutBtn.style.display = "none";
+        resetBtn.style.display = "none";
+        renderTable();
+      }
+    });
+  </script>
+</body>
+</html>
